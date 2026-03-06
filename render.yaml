@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: boutique-botanicals
+    runtime: node
+    plan: free
+    buildCommand: npm run render-build
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: SENDER_EMAIL
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SERVER_PORT
+        value: 10000
