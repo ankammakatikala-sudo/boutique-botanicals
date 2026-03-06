@@ -29,6 +29,10 @@ const transporter = nodemailer.createTransport({
         user: SENDER_EMAIL,
         pass: APP_PASSWORD,
     },
+    family: 4, // Force IPv4 - Render free tier doesn't support IPv6 outbound
+    tls: {
+        rejectUnauthorized: false,
+    },
 });
 
 app.post('/api/send-email', async (req, res) => {
