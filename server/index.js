@@ -33,7 +33,7 @@ console.log(`[Config] OWNER_NAME: ${OWNER_NAME}`);
 const otpStorage = {};
 
 const transporter = nodemailer.createTransport({
-    host: "ankammakatikala@gmail.com",
+    host: "smtp.gmail.com",
     port: 587,
     secure: false, // true for 465, false for other ports
     auth: {
