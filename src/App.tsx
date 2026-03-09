@@ -212,12 +212,34 @@ export default function App() {
                     })
                       .then(r => r.json())
                       .then(data => {
-                        if (data.previewUrl) {
-                          console.log("Email sent! Ethereal Preview URL:", data.previewUrl);
-                          setTimeout(() => showToast("Order completion email sent to " + orderPayload.userEmail), 2000);
+                        if (data.success) {
+                          console.log("Order confirmation email sent to customer.");
+                          setTimeout(() => showToast("Order confirmation email sent to " + orderPayload.userEmail), 2000);
                         }
                       })
                       .catch(e => console.error(e));
+
+                    // Send order details to nursery owner
+                    fetch(`http://${window.location.hostname}:3001/api/send-order-to-owner`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        orderId: newOrderId,
+                        userName: orderPayload.userName,
+                        userEmail: orderPayload.userEmail,
+                        items: cart.map(item => ({ name: item.name, quantity: item.quantity })),
+                        totalCost: orderPayload.totalCost,
+                        orderTime: orderPayload.orderTime
+                      })
+                    })
+                      .then(r => r.json())
+                      .then(data => {
+                        if (data.success) {
+                          console.log("Owner notification email sent successfully.");
+                          setTimeout(() => showToast("Order details sent to nursery owner"), 4000);
+                        }
+                      })
+                      .catch(e => console.error("Failed to notify owner:", e));
 
                     setScreen('order-qr');
                   }}
@@ -492,6 +514,20 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
       const newUser = { username, email, password };
       users.push(newUser);
       localStorage.setItem('users', JSON.stringify(users));
+
+      // Notify nursery owner about new registration
+      fetch(`http://${window.location.hostname}:3001/api/notify-new-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email })
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            console.log("Owner notified about new user registration.");
+          }
+        })
+        .catch(e => console.error("Failed to notify owner of new user:", e));
 
       setSuccess('Registration successful! Please log in.');
       setTimeout(() => {
