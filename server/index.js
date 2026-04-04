@@ -22,7 +22,7 @@ app.use(express.json());
 const SENDER_EMAIL = process.env.SENDER_EMAIL;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const OWNER_EMAIL = process.env.OWNER_EMAIL;
-const OWNER_NAME = process.env.OWNER_NAME || 'Nursery Owner';
+const OWNER_NAME = process.env.OWNER_NAME || 'hitesh.c';
 
 console.log(`[Config] SENDER_EMAIL: ${SENDER_EMAIL ? SENDER_EMAIL : 'ankammakatikala@gmail.com'}`);
 console.log(`[Config] APP_PASSWORD: ${APP_PASSWORD ? '✅ Set' : 'ankammakatikala@gmail.com'}`);
@@ -54,7 +54,7 @@ app.post('/api/send-email', async (req, res) => {
         const { to, subject, text, html, qrData } = req.body;
 
         const mailOptions = {
-            from: `"Green Plant Selling" <${SENDER_EMAIL}>`,
+            from: `"FTC Nursery" <${SENDER_EMAIL}>`,
             to: to,
             subject: subject,
             text: text,
@@ -142,14 +142,14 @@ app.post('/api/send-order-to-owner', async (req, res) => {
                 </div>
             </div>
             <div style="padding: 16px 32px; background: #f3f4f6; text-align: center; color: #9ca3af; font-size: 12px;">
-                Green Plant Selling — Boutique Botanicals
+                FTC Nursery — Boutique Botanicals
             </div>
         </div>`;
 
         const plainText = `New Order #${orderId}\n\nCustomer: ${userName}\nEmail: ${userEmail}\nOrder Time: ${orderTime}\n\nItems:\n${items.map(i => `- ${i.name} (x${i.quantity})`).join('\n')}\n\nTotal: ₹${totalCost}`;
 
         await transporter.sendMail({
-            from: `"Green Plant Selling" <${SENDER_EMAIL}>`,
+            from: `"FTC Nursery" <${SENDER_EMAIL}>`,
             to: OWNER_EMAIL,
             subject: `🌿 New Order #${orderId} from ${userName}`,
             text: plainText,
@@ -183,7 +183,7 @@ app.post('/api/notify-new-user', async (req, res) => {
                 <p style="color: #dbeafe; margin: 8px 0 0; font-size: 13px;">Dear ${OWNER_NAME}</p>
             </div>
             <div style="padding: 32px;">
-                <p style="color: #374151; font-size: 15px; margin: 0 0 20px;">A new customer has created an account on <strong>Green Plant Selling</strong>.</p>
+                <p style="color: #374151; font-size: 15px; margin: 0 0 20px;">A new customer has created an account on <strong>FTC Nursery</strong>.</p>
                 <table style="width: 100%; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
                     <tr>
                         <td style="padding: 14px 20px; color: #6b7280; font-size: 14px; border-bottom: 1px solid #f3f4f6;">👤 Username</td>
@@ -200,12 +200,12 @@ app.post('/api/notify-new-user', async (req, res) => {
                 </table>
             </div>
             <div style="padding: 16px 32px; background: #f3f4f6; text-align: center; color: #9ca3af; font-size: 12px;">
-                Green Plant Selling — Boutique Botanicals
+                FTC Nursery — Boutique Botanicals
             </div>
         </div>`;
 
         await transporter.sendMail({
-            from: `"Green Plant Selling" <${SENDER_EMAIL}>`,
+            from: `"FTC Nursery" <${SENDER_EMAIL}>`,
             to: OWNER_EMAIL,
             subject: `🎉 New User Registered: ${username} (${email})`,
             text: `New User Registration\n\nUsername: ${username}\nEmail: ${email}\nRegistered At: ${registrationTime}`,
@@ -229,7 +229,7 @@ app.post('/api/send-otp', async (req, res) => {
         otpStorage[email] = { otp, expiresAt: Date.now() + 10 * 60 * 1000 }; // 10 min expiration
 
         await transporter.sendMail({
-            from: `"Green Plant Selling" <${SENDER_EMAIL}>`,
+            from: `"FTC Nursery" <${SENDER_EMAIL}>`,
             to: email,
             subject: "Your OTP Verification Code",
             text: `Hello,\n\nYour OTP for registration is: ${otp}\n\nThis OTP will expire in 10 minutes.\n\nFrom your green plant selling project.`,

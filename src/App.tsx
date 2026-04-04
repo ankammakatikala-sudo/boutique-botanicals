@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -22,13 +22,27 @@ import {
   Settings,
   Leaf,
   Sparkles,
-  X
+  X,
+  Download,
+  Share as ShareIcon,
+  Share2
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import CryptoJS from 'crypto-js';
 import { Screen, Plant, CartItem, Order } from './types';
 import { PLANTS } from './constants';
+import {
+  checkEmailExists,
+  registerUser,
+  loginUser,
+  updateUserPassword,
+  updateUserName,
+  saveOrder,
+  loadUserOrders,
+  updateOrderStatus,
+  subscribeToUserOrders,
+} from './firebase';
 
 const EMOJIS = ['🌿', '🌱', '🌵', '🌴', '🌳', '🍀', '🍃', '🌻', '🌷', '🌸', '🪴', '🎋', '🎍', '🍄', '🌵'];
 const SECRET_KEY = 'green_plant_boutique_secure_key_2026';
@@ -46,10 +60,7 @@ export default function App() {
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [userPhoto, setUserPhoto] = useState<string | null>(null);
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const savedOrders = localStorage.getItem('orders');
-    return savedOrders ? JSON.parse(savedOrders) : [];
-  });
+  const [orders, setOrders] = useState<Order[]>([]);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -58,9 +69,14 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Subscribe to real-time order updates from Firebase
   useEffect(() => {
-    localStorage.setItem('orders', JSON.stringify(orders));
-  }, [orders]);
+    if (!userEmail) return;
+    const unsubscribe = subscribeToUserOrders(userEmail, (firebaseOrders) => {
+      setOrders(firebaseOrders as Order[]);
+    });
+    return () => unsubscribe();
+  }, [userEmail]);
 
   // Splash screen timeout
   useEffect(() => {
@@ -138,7 +154,7 @@ export default function App() {
           }} />
         )}
 
-        {(['home', 'shop', 'cart', 'profile', 'change-password', 'change-name', 'qr-scanner', 'order-details'].includes(screen)) && (
+        {(['home', 'shop', 'cart', 'profile', 'liked', 'change-password', 'change-name', 'qr-scanner', 'order-details'].includes(screen)) && (
           <motion.div
             key="main"
             initial={{ opacity: 0 }}
@@ -157,8 +173,18 @@ export default function App() {
             }} />
 
             <main className="flex-1 overflow-y-auto pb-24 px-4 pt-4">
-              {screen === 'home' && <HomeScreen onNavigate={setScreen} addToCart={addToCart} toggleFavorite={toggleFavorite} favorites={favorites} />}
-              {screen === 'shop' && <ShopScreen addToCart={addToCart} toggleFavorite={toggleFavorite} favorites={favorites} />}
+              {(() => {
+                const orderedIds = new Set<string>();
+                orders.forEach(o => o.items.forEach(item => orderedIds.add(item.id)));
+
+                return (
+                  <>
+                    {screen === 'home' && <HomeScreen onNavigate={setScreen} addToCart={addToCart} toggleFavorite={toggleFavorite} favorites={favorites} orderedIds={orderedIds} />}
+                    {screen === 'liked' && <LikedScreen onNavigate={setScreen} addToCart={addToCart} toggleFavorite={toggleFavorite} favorites={favorites} orderedIds={orderedIds} />}
+                    {screen === 'shop' && <ShopScreen addToCart={addToCart} toggleFavorite={toggleFavorite} favorites={favorites} orderedIds={orderedIds} />}
+                  </>
+                );
+              })()}
               {screen === 'cart' && (
                 <CartScreen
                   cart={cart}
@@ -188,16 +214,19 @@ export default function App() {
                       items: [...cart],
                       totalCost: orderPayload.totalCost,
                       orderTime: orderPayload.orderTime,
-                      status: 'Ready for Pickup',
+                      status: 'Ordered',
                       encryptedData: publicQrText
                     };
                     setOrders(prev => [...prev, newOrder]);
                     setCurrentOrderId(newOrder.id);
                     setCart([]);
 
+                    // Save order to Firebase
+                    saveOrder(newOrder).catch(e => console.error('Failed to save order to Firebase:', e));
+
                     showToast("Your plant order is successfully placed.");
 
-                    const mailText = `Hi ${orderPayload.userName},\n\nyour ordered items are placed.\n\nPlease visit the nursery after 5-6 hours to collect your plants.\n\nOrder Details:\n${itemLists}\n\nTotal: ₹${orderPayload.totalCost}\n\n--- Nursery Details ---\nNursery Name: Green Plant Nursery\nOwner Name: John Doe\nLocation: 123 Green Way, Plant City\n\nThanks,\nGreen Plant Selling`;
+                    const mailText = `Hi ${orderPayload.userName},\n\nyour ordered items are placed.\n\nPlease visit the nursery after 5-6 hours to collect your plants.\n\nOrder Details:\n${itemLists}\n\nTotal: ₹${orderPayload.totalCost}\n\n--- Nursery Details ---\nNursery Name: FTC Nursery\nOwner Name: hitesh.c\nOwner Mobile: 6302450825\nCustomer Care: 6302450825\nLocation: https://goo.gl/maps/FtmXBooJQ5B4D6ec6?g_st=aw\n\nThanks,\nFTC Nursery`;
 
                     // Send Email via local backend
                     fetch(`/api/send-email`, {
@@ -255,12 +284,14 @@ export default function App() {
                   onSignOut={() => setScreen('auth')}
                 />
               )}
-              {screen === 'change-password' && <ChangePasswordScreen onBack={() => setScreen('profile')} />}
+              {screen === 'change-password' && <ChangePasswordScreen userEmail={userEmail} onBack={() => setScreen('profile')} />}
               {screen === 'change-name' && (
                 <ChangeNameScreen
                   currentName={userName}
                   onSave={(newName) => {
                     setUserName(newName);
+                    // Update name in Firebase
+                    updateUserName(userEmail, newName).catch(e => console.error('Failed to update name in Firebase:', e));
                     setScreen('profile');
                   }}
                 />
@@ -295,8 +326,20 @@ export default function App() {
                   orderId={currentOrderId!}
                   orders={orders}
                   onMarkCollected={(id) => {
-                    setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'Collected' } : o));
-                    setScreen('home');
+                    const statusCycle: Record<string, Order['status']> = {
+                      'Ordered': 'Processing',
+                      'Processing': 'Delivered',
+                      'Delivered': 'Collected',
+                      'Collected': 'Collected'
+                    };
+                    setOrders(prev => prev.map(o => {
+                      if (o.id === id) {
+                        const newStatus = statusCycle[o.status] || 'Ordered';
+                        updateOrderStatus(id, newStatus).catch(e => console.error('Failed to update status in Firebase:', e));
+                        return { ...o, status: newStatus };
+                      }
+                      return o;
+                    }));
                   }}
                 />
               )}
@@ -437,9 +480,20 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
       if (!username || !email) { setError('Username and Email are required'); return; }
       if (username.length < 3) { setError('Username must be at least 3 characters'); return; }
 
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      if (users.find((u: any) => u.email === email)) {
-        setError('Email already registered'); return;
+      try {
+        // Check Firebase for existing email
+        const emailExists = await checkEmailExists(email);
+        if (emailExists) {
+          setError('Email already registered'); return;
+        }
+        // Also check localStorage for old users
+        const localUsers = JSON.parse(localStorage.getItem('users') || '[]');
+        if (localUsers.find((u: any) => u.email === email)) {
+          setError('Email already registered'); return;
+        }
+      } catch (err) {
+        console.error('Email check error:', err);
+        // Continue with registration even if check fails
       }
     }
 
@@ -458,7 +512,8 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
         setError(data.error || 'Failed to send OTP');
       }
     } catch (err) {
-      setError('Server error.');
+      console.error('Send OTP error:', err);
+      setError('Could not connect to email server. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -482,61 +537,89 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
         setError(data.error || 'Invalid OTP');
       }
     } catch (err) {
-      setError('Server error.');
+      console.error('Verify OTP error:', err);
+      setError('Could not connect to server. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleAuth = () => {
+  const handleAuth = async () => {
     setError('');
     setSuccess('');
+    setIsLoading(true);
 
-    if (isLogin) {
-      // Mock Login
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      const user = users.find((u: any) => u.email === email && u.password === password);
-      if (user) {
-        onLogin(user.email, user.username);
-      } else {
-        setError('Invalid email or password');
-      }
-    } else {
-      // Registration Final Step
-      if (regStep === 'email') return handleSendOtp();
-      if (regStep === 'otp') return handleVerifyOtp();
+    try {
+      if (isLogin) {
+        // Step 1: Try Firebase login first
+        let user = await loginUser(email, password);
 
-      if (!password || !confirmPassword) { setError('Please enter password'); return; }
-      if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
-      if (password !== confirmPassword) { setError('Passwords do not match'); return; }
-
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      const newUser = { username, email, password };
-      users.push(newUser);
-      localStorage.setItem('users', JSON.stringify(users));
-
-      // Notify nursery owner about new registration
-      fetch(`/api/notify-new-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email })
-      })
-        .then(r => r.json())
-        .then(data => {
-          if (data.success) {
-            console.log("Owner notified about new user registration.");
+        // Step 2: If not found in Firebase, check localStorage (for old accounts)
+        if (!user) {
+          const localUsers = JSON.parse(localStorage.getItem('users') || '[]');
+          const localUser = localUsers.find((u: any) => u.email === email && u.password === password);
+          if (localUser) {
+            user = { email: localUser.email, username: localUser.username };
+            // Auto-migrate this user to Firebase for future logins
+            try {
+              await registerUser(localUser.username, localUser.email, localUser.password);
+              console.log('User migrated from localStorage to Firebase:', localUser.email);
+            } catch (migErr) {
+              console.error('Migration error (non-critical):', migErr);
+            }
           }
-        })
-        .catch(e => console.error("Failed to notify owner of new user:", e));
+        }
 
-      setSuccess('Registration successful! Please log in.');
-      setTimeout(() => {
-        setIsLogin(true);
-        setRegStep('email');
-        setSuccess('');
-        setPassword('');
-        setConfirmPassword('');
-      }, 2000);
+        if (user) {
+          onLogin(user.email, user.username);
+        } else {
+          setError('Invalid email or password. Please check your credentials or sign up.');
+        }
+      } else {
+        // Registration Flow
+        if (regStep === 'email') { setIsLoading(false); return handleSendOtp(); }
+        if (regStep === 'otp') { setIsLoading(false); return handleVerifyOtp(); }
+
+        if (!password || !confirmPassword) { setError('Please enter password'); setIsLoading(false); return; }
+        if (password.length < 6) { setError('Password must be at least 6 characters'); setIsLoading(false); return; }
+        if (password !== confirmPassword) { setError('Passwords do not match'); setIsLoading(false); return; }
+
+        // Save user to Firebase Firestore
+        await registerUser(username, email, password);
+
+        // Also save to localStorage as backup
+        const localUsers = JSON.parse(localStorage.getItem('users') || '[]');
+        localUsers.push({ username, email, password });
+        localStorage.setItem('users', JSON.stringify(localUsers));
+
+        // Notify nursery owner about new registration
+        fetch(`/api/notify-new-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, email })
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) {
+              console.log("Owner notified about new user registration.");
+            }
+          })
+          .catch(e => console.error("Failed to notify owner of new user:", e));
+
+        setSuccess('Registration successful! Please log in.');
+        setTimeout(() => {
+          setIsLogin(true);
+          setRegStep('email');
+          setSuccess('');
+          setPassword('');
+          setConfirmPassword('');
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Auth error:', err);
+      setError('An error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -714,6 +797,7 @@ function Header({ screen, onBack }: { screen: Screen, onBack: () => void }) {
     shop: 'Indoor Plants',
     cart: 'Shopping Cart',
     profile: 'Profile Settings',
+    liked: 'Your Favorites',
     'change-password': 'Change Password',
     'change-name': 'Change Name',
     'qr-scanner': 'Scan Order QR',
@@ -757,6 +841,7 @@ function BottomNav({ currentScreen, onNavigate, cartCount }: { currentScreen: Sc
     { id: 'home', icon: HomeIcon, label: 'Home' },
     { id: 'shop', icon: ShoppingBag, label: 'Shop' },
     { id: 'cart', icon: ShoppingCart, label: 'Cart', badge: cartCount },
+    { id: 'liked', icon: Heart, label: 'Likes' },
     { id: 'profile', icon: User, label: 'Profile' }
   ];
 
@@ -792,11 +877,12 @@ function BottomNav({ currentScreen, onNavigate, cartCount }: { currentScreen: Sc
   );
 }
 
-function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites }: {
+function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites, orderedIds }: {
   onNavigate: (s: Screen) => void,
   addToCart: (p: Plant) => void,
   toggleFavorite: (id: string) => void,
-  favorites: string[]
+  favorites: string[],
+  orderedIds: Set<string>
 }) {
   const categories = [
     { name: 'Indoor', icon: '🏠', color: 'bg-emerald-50' },
@@ -809,7 +895,7 @@ function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites }: {
 
   return (
     <div className="space-y-8 pb-20">
-      <div className="flex flex-col items-center pt-10 pb-12 relative overflow-hidden">
+      <div className="flex flex-col items-center pt-8 pb-10 relative overflow-hidden">
         {/* Ethereal Beauty Aura */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full">
           <motion.div
@@ -944,6 +1030,13 @@ function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites }: {
               <span className="text-xs font-bold text-zinc-700">{cat.name}</span>
             </button>
           ))}
+          <button
+            onClick={() => onNavigate('liked')}
+            className="bg-red-50 p-4 rounded-3xl min-w-[120px] flex flex-col items-center gap-2 transition-transform active:scale-95 border-2 border-red-100"
+          >
+            <Heart className="w-6 h-6 text-red-500 fill-red-500" />
+            <span className="text-xs font-bold text-red-700">Liked Items</span>
+          </button>
         </div>
       </div>
 
@@ -960,6 +1053,7 @@ function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites }: {
                 onAdd={() => addToCart(plant)}
                 onFavorite={() => toggleFavorite(plant.id)}
                 isFavorite={favorites.includes(plant.id)}
+                isOrdered={orderedIds.has(plant.id)}
               />
             </div>
           ))}
@@ -969,10 +1063,62 @@ function HomeScreen({ onNavigate, addToCart, toggleFavorite, favorites }: {
   );
 }
 
-function ShopScreen({ addToCart, toggleFavorite, favorites }: {
+function LikedScreen({ onNavigate, addToCart, toggleFavorite, favorites, orderedIds }: {
+  onNavigate: (s: Screen) => void,
   addToCart: (p: Plant) => void,
   toggleFavorite: (id: string) => void,
-  favorites: string[]
+  favorites: string[],
+  orderedIds: Set<string>
+}) {
+  const likedPlants = PLANTS.filter(p => favorites.includes(p.id));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-zinc-900">Your Favorites</h2>
+        <span className="text-xs font-bold text-zinc-400">{likedPlants.length} items</span>
+      </div>
+
+      {likedPlants.length > 0 ? (
+        <div className="grid grid-cols-2 gap-4">
+          {likedPlants.map(plant => (
+            <div key={plant.id}>
+              <PlantCard
+                plant={plant}
+                onAdd={() => addToCart(plant)}
+                onFavorite={() => toggleFavorite(plant.id)}
+                isFavorite={true}
+                isOrdered={orderedIds.has(plant.id)}
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="py-20 text-center space-y-6">
+          <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center mx-auto">
+            <Heart className="w-8 h-8 text-zinc-200" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="font-bold text-zinc-900">No favorites yet</h3>
+            <p className="text-sm text-zinc-400 px-10">Tap the heart icon on any plant to save it here for later.</p>
+          </div>
+          <button
+            onClick={() => onNavigate('shop')}
+            className="bg-primary text-primary-dark font-bold px-8 py-3 rounded-2xl active:scale-95 transition-all shadow-lg shadow-primary/20"
+          >
+            Start Exploring
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShopScreen({ addToCart, toggleFavorite, favorites, orderedIds }: {
+  addToCart: (p: Plant) => void,
+  toggleFavorite: (id: string) => void,
+  favorites: string[],
+  orderedIds: Set<string>
 }) {
   const [activeCategory, setActiveCategory] = useState('Indoor');
   const [activeSubCategory, setActiveSubCategory] = useState('All');
@@ -1045,6 +1191,7 @@ function ShopScreen({ addToCart, toggleFavorite, favorites }: {
                 onAdd={() => addToCart(plant)}
                 onFavorite={() => toggleFavorite(plant.id)}
                 isFavorite={favorites.includes(plant.id)}
+                isOrdered={orderedIds.has(plant.id)}
               />
             </div>
           ))}
@@ -1058,11 +1205,12 @@ function ShopScreen({ addToCart, toggleFavorite, favorites }: {
   );
 }
 
-function PlantCard({ plant, onAdd, onFavorite, isFavorite }: {
+function PlantCard({ plant, onAdd, onFavorite, isFavorite, isOrdered }: {
   plant: Plant,
   onAdd: () => void,
   onFavorite: () => void,
-  isFavorite: boolean
+  isFavorite: boolean,
+  isOrdered?: boolean
 }) {
   return (
     <motion.div
@@ -1078,6 +1226,12 @@ function PlantCard({ plant, onAdd, onFavorite, isFavorite }: {
       >
         <Heart className={`w-4 h-4 ${isFavorite ? 'fill-red-500 text-red-500' : 'text-zinc-300'}`} />
       </button>
+
+      {isOrdered && (
+        <div className="absolute top-4 left-4 z-10 px-2 py-1 bg-emerald-500 text-white text-[8px] font-black uppercase tracking-widest rounded-lg shadow-lg">
+          Ordered
+        </div>
+      )}
 
       <div className="aspect-square rounded-[1.5rem] overflow-hidden mb-4 bg-zinc-50 relative">
         <img
@@ -1365,13 +1519,14 @@ function ChangeNameScreen({ currentName, onSave }: { currentName: string, onSave
   );
 }
 
-function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
+function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack: () => void }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('');
     setSuccess('');
 
@@ -1388,11 +1543,23 @@ function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
       return;
     }
 
-    // Mock update: In a real app, we'd update the user's password in the database/localStorage
-    setSuccess('Password updated successfully!');
-    setTimeout(() => {
-      onBack();
-    }, 1500);
+    setIsLoading(true);
+    try {
+      const updated = await updateUserPassword(userEmail, newPassword);
+      if (updated) {
+        setSuccess('Password updated successfully!');
+        setTimeout(() => {
+          onBack();
+        }, 1500);
+      } else {
+        setError('Failed to update password. User not found.');
+      }
+    } catch (err) {
+      console.error('Password update error:', err);
+      setError('An error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -1468,7 +1635,7 @@ function ChangePasswordScreen({ onBack }: { onBack: () => void }) {
 function OrderQRScreen({ order, onDone }: { order: Order, onDone: () => void }) {
   const qrRef = useRef<HTMLDivElement>(null);
 
-  const handleDownload = async () => {
+  const handleDownloadImage = async () => {
     if (!qrRef.current) return;
     try {
       const canvas = await html2canvas(qrRef.current, { scale: 2 });
@@ -1481,27 +1648,13 @@ function OrderQRScreen({ order, onDone }: { order: Order, onDone: () => void }) 
       console.error("Failed to download image", err);
     }
   };
-
-  const handleShare = async () => {
-    if (!qrRef.current) return;
-    try {
-      const canvas = await html2canvas(qrRef.current, { scale: 2 });
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const file = new File([blob], `GPS_Order_${order.id}.png`, { type: 'image/png' });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          navigator.share({
-            title: `GPS Order #${order.id}`,
-            text: `Order Details for ${order.userName}`,
-            files: [file]
-          }).catch(err => console.error("Share failed:", err));
-        } else {
-          alert("Sharing images is not supported on this browser.");
-        }
-      });
-    } catch (err) {
-      console.error("Failed to share image", err);
-    }
+  const handleDownloadText = () => {
+    const text = `GPS ORDER DETAILS\nOrder ID: ${order.id}\nStatus: ${order.status}\nCustomer: ${order.userName}\nPlants:\n${order.items.map(i => `- ${i.name} (x${i.quantity})`).join('\n')}\nTotal: ₹${order.totalCost}`;
+    const file = new Blob([text], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.download = `GP_Order_${order.id}.txt`;
+    link.href = URL.createObjectURL(file);
+    link.click();
   };
 
   if (!order) return null;
@@ -1510,45 +1663,60 @@ function OrderQRScreen({ order, onDone }: { order: Order, onDone: () => void }) 
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="h-full flex flex-col items-center justify-start p-6 text-center bg-white overflow-y-auto"
+      className="h-full flex flex-col items-center justify-start p-6 text-center bg-white overflow-y-auto no-scrollbar"
     >
-      <h2 className="text-2xl font-bold text-emerald-900 mt-8 mb-2">Order Successful 🌿</h2>
-      <p className="text-zinc-500 mb-8 text-sm px-4">
-        your ordered items are placed<br />
-        Please visit the nursery after 5–6 hours and show this QR code to collect your plants.
-      </p>
+      <h2 className="text-2xl font-bold text-emerald-900 mt-8 mb-1">Order Confirmed! 🌿</h2>
+      <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest mb-6 border border-emerald-200">
+        Status: {order.status}
+      </div>
 
-      <div ref={qrRef} className="w-full bg-zinc-50 rounded-3xl p-6 mb-6 flex flex-col items-center card-shadow">
-        <div className="bg-white p-4 rounded-2xl shadow-sm mb-6">
-          <QRCode value={order.encryptedData || order.id} size={180} />
+      <div ref={qrRef} className="w-full bg-zinc-50 rounded-[2.5rem] p-8 mb-8 flex flex-col items-center card-shadow relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+        <div className="bg-white p-5 rounded-3xl shadow-sm mb-6 relative z-10">
+          <QRCode value={order.encryptedData || order.id} size={180} fgColor="#064e3b" />
         </div>
 
-        <div className="w-full text-left space-y-2 border-t border-zinc-200 pt-4">
-          <p className="text-sm"><span className="text-zinc-500">Name:</span> <span className="font-bold text-zinc-900">{order.userName}</span></p>
-          <p className="text-sm"><span className="text-zinc-500">Email:</span> <span className="font-bold text-zinc-900">{order.userId}</span></p>
-          <div className="text-sm">
-            <span className="text-zinc-500">Plants:</span>
-            <ul className="list-disc pl-5 mt-1 font-medium text-zinc-900">
-              {order.items.map(item => (
-                <li key={item.id}>{item.name} - {item.quantity}</li>
-              ))}
-            </ul>
+        <div className="w-full text-left space-y-3 border-t border-zinc-200 pt-6 relative z-10">
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] text-zinc-400 uppercase font-black">Order Reference</span>
+            <span className="text-[10px] bg-zinc-200 px-2 py-0.5 rounded text-zinc-600 font-bold">#{order.id}</span>
           </div>
-          <p className="text-sm mt-2"><span className="text-zinc-500">Total amount (indian rupees):</span> <span className="font-bold text-primary-dark">₹{order.totalCost}</span></p>
-          <p className="text-xs text-zinc-400 mt-2 text-center">ORDER ID: {order.id}</p>
+          <p className="text-sm font-bold text-zinc-900 flex justify-between items-center">
+            <span className="text-zinc-500 font-medium">Customer:</span> {order.userName}
+          </p>
+          <div className="text-sm border-y border-zinc-100 py-3 my-2">
+            <span className="text-zinc-500 font-medium block mb-2">Plants Ordered:</span>
+            <div className="flex flex-wrap gap-2">
+              {order.items.map(item => (
+                <span key={item.id} className="bg-white border border-zinc-200 px-2.5 py-1 rounded-xl text-[10px] font-bold text-zinc-700">
+                  {item.name} × {item.quantity}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-zinc-500 font-medium text-sm">Total Paid:</span>
+            <span className="text-xl font-black text-primary-dark">₹{order.totalCost}</span>
+          </div>
         </div>
       </div>
 
-      <div className="w-full grid grid-cols-2 gap-4 mb-4 mt-auto shrink-0">
-        <button onClick={handleDownload} className="bg-white border border-zinc-200 text-zinc-700 font-bold py-3 rounded-2xl text-sm active:scale-95 transition-all">Download</button>
-        <button onClick={handleShare} className="bg-white border border-zinc-200 text-zinc-700 font-bold py-3 rounded-2xl text-sm active:scale-95 transition-all">Share</button>
+      <div className="w-full space-y-4 mb-4 mt-auto shrink-0 pb-12">
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={handleDownloadImage} className="bg-zinc-900 text-white font-bold py-4 rounded-2xl text-xs flex items-center justify-center gap-2 active:scale-95 transition-all w-full">
+            <Download className="w-4 h-4" /> Save Photo
+          </button>
+          <button onClick={handleDownloadText} className="bg-white border border-zinc-200 text-zinc-700 font-bold py-4 rounded-2xl text-xs flex items-center justify-center gap-2 active:scale-95 transition-all w-full">
+            <Download className="w-4 h-4 text-primary" /> Get Reciept
+          </button>
+        </div>
+        <button
+          onClick={onDone}
+          className="w-full bg-emerald-950 text-white font-black py-5 rounded-2xl active:scale-95 transition-all uppercase tracking-widest text-xs shadow-xl shadow-emerald-950/20"
+        >
+          Return to Dashboard
+        </button>
       </div>
-      <button
-        onClick={onDone}
-        className="w-full bg-primary-dark text-white font-bold py-4 rounded-2xl mb-8 shrink-0 active:scale-95 transition-all"
-      >
-        Back to Home
-      </button>
     </motion.div>
   );
 }
@@ -1654,11 +1822,16 @@ function OrderDetailsScreen({ orderId, orders, onMarkCollected }: { orderId: str
           onClick={() => onMarkCollected(order.id)}
           disabled={order.status === 'Collected'}
           className={`w-full font-bold py-4 rounded-2xl transition-all ${order.status === 'Collected'
-            ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-            : 'bg-emerald-900 text-white active:scale-95 shadow-lg shadow-emerald-900/20'
+            ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed border-2 border-zinc-100'
+            : 'bg-emerald-950 text-white active:scale-95 shadow-xl shadow-emerald-950/20'
             }`}
         >
-          {order.status === 'Collected' ? 'Already Collected' : 'Mark Order as Collected'}
+          {(() => {
+            if (order.status === 'Ordered') return 'Move to Processing';
+            if (order.status === 'Processing') return 'Mark as Delivered';
+            if (order.status === 'Delivered') return 'Complete Order (Collected)';
+            return 'Order Fully Completed';
+          })()}
         </button>
       </div>
     </div>

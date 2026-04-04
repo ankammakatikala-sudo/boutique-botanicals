@@ -24,8 +24,8 @@ export interface Order {
   items: CartItem[];
   totalCost: number;
   orderTime: string;
-  status: 'Ready for Pickup' | 'Collected';
+  status: 'Ordered' | 'Processing' | 'Delivered' | 'Collected';
   encryptedData?: string;
 }
 
-export type Screen = 'splash' | 'auth' | 'home' | 'shop' | 'cart' | 'profile' | 'order-confirmed' | 'change-password' | 'change-name' | 'order-qr' | 'qr-scanner' | 'order-details';
+export type Screen = 'splash' | 'auth' | 'home' | 'shop' | 'cart' | 'profile' | 'liked' | 'change-password' | 'change-name' | 'order-qr' | 'qr-scanner' | 'order-details';
