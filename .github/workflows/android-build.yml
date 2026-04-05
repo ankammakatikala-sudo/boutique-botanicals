@@ -25,19 +25,22 @@ jobs:
 
       - name: Install Dependencies
         run: npm install
+        working-directory: ./frontend
 
       - name: Build Web Assets
         run: npm run build
+        working-directory: ./frontend
 
       - name: Sync Capacitor
         run: npx cap sync android
+        working-directory: ./frontend
 
       - name: Build Debug APK
-        working-directory: ./android
+        working-directory: ./frontend/android
         run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: frontend/android/app/build/outputs/apk/debug/*.apk

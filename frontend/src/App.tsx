@@ -42,7 +42,8 @@ import {
   loadUserOrders,
   updateOrderStatus,
   subscribeToUserOrders,
-} from './firebase';
+  supabase
+} from './supabase';
 
 const EMOJIS = ['🌿', '🌱', '🌵', '🌴', '🌳', '🍀', '🍃', '🌻', '🌷', '🌸', '🪴', '🎋', '🎍', '🍄', '🌵'];
 const SECRET_KEY = 'green_plant_boutique_secure_key_2026';
@@ -69,13 +70,17 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Subscribe to real-time order updates from Firebase
+  // Subscribe to real-time order updates from Supabase
   useEffect(() => {
     if (!userEmail) return;
     const unsubscribe = subscribeToUserOrders(userEmail, (firebaseOrders) => {
       setOrders(firebaseOrders as Order[]);
     });
-    return () => unsubscribe();
+    return () => {
+      if (unsubscribe && typeof unsubscribe.unsubscribe === 'function') {
+        unsubscribe.unsubscribe();
+      }
+    };
   }, [userEmail]);
 
   // Splash screen timeout
@@ -221,8 +226,8 @@ export default function App() {
                     setCurrentOrderId(newOrder.id);
                     setCart([]);
 
-                    // Save order to Firebase
-                    saveOrder(newOrder).catch(e => console.error('Failed to save order to Firebase:', e));
+                    // Save order to Supabase
+                    saveOrder(newOrder).catch(e => console.error('Failed to save order to Supabase:', e));
 
                     showToast("Your plant order is successfully placed.");
 
@@ -290,8 +295,8 @@ export default function App() {
                   currentName={userName}
                   onSave={(newName) => {
                     setUserName(newName);
-                    // Update name in Firebase
-                    updateUserName(userEmail, newName).catch(e => console.error('Failed to update name in Firebase:', e));
+                    // Update name in Supabase
+                    updateUserName(userEmail, newName).catch(e => console.error('Failed to update name in Supabase:', e));
                     setScreen('profile');
                   }}
                 />
@@ -335,7 +340,7 @@ export default function App() {
                     setOrders(prev => prev.map(o => {
                       if (o.id === id) {
                         const newStatus = statusCycle[o.status] || 'Ordered';
-                        updateOrderStatus(id, newStatus).catch(e => console.error('Failed to update status in Firebase:', e));
+                        updateOrderStatus(id, newStatus).catch(e => console.error('Failed to update status in Supabase:', e));
                         return { ...o, status: newStatus };
                       }
                       return o;
@@ -554,16 +559,16 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
         // Step 1: Try Firebase login first
         let user = await loginUser(email, password);
 
-        // Step 2: If not found in Firebase, check localStorage (for old accounts)
+        // Step 2: If not found in Supabase, check localStorage (for old accounts)
         if (!user) {
           const localUsers = JSON.parse(localStorage.getItem('users') || '[]');
           const localUser = localUsers.find((u: any) => u.email === email && u.password === password);
           if (localUser) {
-            user = { email: localUser.email, username: localUser.username };
-            // Auto-migrate this user to Firebase for future logins
+            user = { uid: 'legacy-' + Math.random(), email: localUser.email, username: localUser.username };
+            // Auto-migrate this user to Supabase for future logins
             try {
               await registerUser(localUser.username, localUser.email, localUser.password);
-              console.log('User migrated from localStorage to Firebase:', localUser.email);
+              console.log('User migrated from localStorage to Supabase:', localUser.email);
             } catch (migErr) {
               console.error('Migration error (non-critical):', migErr);
             }
