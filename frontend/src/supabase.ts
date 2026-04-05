@@ -26,19 +26,26 @@ export const checkEmailExists = async (email: string): Promise<boolean> => {
 };
 
 export const registerUser = async (username: string, email: string, password: string) => {
-  const data = await fetchJson('/api/auth/register', {
+  const res = await fetch(`${API_URL}/api/auth/register`, {
+    headers: { 'Content-Type': 'application/json' },
     method: 'POST',
     body: JSON.stringify({ username, email, password }),
   });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Registration failed');
   return { uid: data.user?.id, username: data.username, email: data.user?.email };
 };
 
 export const loginUser = async (email: string, password: string) => {
-  const data = await fetchJson('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
-  return { uid: data.user?.id, email: data.user?.email, username: data.profile?.username };
+  try {
+    const data = await fetchJson('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    return { uid: data.user?.id, email: data.user?.email, username: data.profile?.username };
+  } catch {
+    return null;
+  }
 };
 
 export const updateUserPassword = async (_email: string, newPassword: string) => {

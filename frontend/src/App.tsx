@@ -620,9 +620,10 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
           setConfirmPassword('');
         }, 2000);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Auth error:', err);
-      setError('An error occurred. Please try again.');
+      const message = err?.message || 'An error occurred. Please try again.';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -1550,18 +1551,15 @@ function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack
 
     setIsLoading(true);
     try {
-      const updated = await updateUserPassword(userEmail, newPassword);
-      if (updated) {
-        setSuccess('Password updated successfully!');
-        setTimeout(() => {
-          onBack();
-        }, 1500);
-      } else {
-        setError('Failed to update password. User not found.');
-      }
-    } catch (err) {
+      await updateUserPassword(userEmail, newPassword);
+      setSuccess('Password updated successfully!');
+      setTimeout(() => {
+        onBack();
+      }, 1500);
+    } catch (err: any) {
       console.error('Password update error:', err);
-      setError('An error occurred. Please try again.');
+      const message = err?.message || 'Failed to update password. Please try again.';
+      setError(message);
     } finally {
       setIsLoading(false);
     }

@@ -123,7 +123,10 @@ const rawPlants: Plant[] = [
   { id: '210', name: 'Stevia', scientificName: 'Stevia rebaudiana', price: 399, originalPrice: 600, rating: 4.6, category: 'Medicinal', subCategory: 'Herbs', benefits: 'Natural zero-calorie sweetener', image: '',  stock: 30, description: 'A natural sugar substitute plant.' },
 ];
 
-const plantImages: Record<string, string> = import.meta.glob('./plantsimages/**/*.{jpg,jpeg,png,webp,avif}', { eager: true, import: 'default' });
+const plantImages: Record<string, string> = import.meta.glob(
+  '../plantsimages/**/*.{jpg,jpeg,png,webp,avif}',
+  { eager: true, import: 'default' }
+);
 
 export const PLANTS: Plant[] = rawPlants.map(plant => {
   let localImage = plant.image;
@@ -131,8 +134,11 @@ export const PLANTS: Plant[] = rawPlants.map(plant => {
     const parts = path.split('/');
     const filenameWithExt = parts[parts.length - 1];
     const filename = filenameWithExt.substring(0, filenameWithExt.lastIndexOf('.'));
+    // Decode URI-encoded characters (e.g. %20 for spaces) so
+    // "Snake%20Plant" matches the plant name "Snake Plant"
+    const decodedFilename = decodeURIComponent(filename);
 
-    if (filename === plant.name) {
+    if (decodedFilename === plant.name) {
       localImage = plantImages[path];
       break;
     }
