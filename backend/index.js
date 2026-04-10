@@ -1,8 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -11,11 +17,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ─── Supabase (credentials stay here, never exposed to frontend) ─────────────
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+// ─── Firebase Admin SDK (Firestore) ──────────────────────────────────────────
+// Initialize with the project ID from the frontend Firebase config
+initializeApp({
+  projectId: 'green-plant-silling',
+});
+
+const db = getFirestore();
 
 // ─── Email helper ─────────────────────────────────────────────────────────────
 const sendMail = async (to, subject, text) => {
@@ -26,15 +34,14 @@ const sendMail = async (to, subject, text) => {
   return transporter.sendMail({ from: process.env.SENDER_EMAIL, to, subject, text });
 };
 
-// ─── Auth routes ─────────────────────────────────────────────────────────────
+// ─── Auth routes (Firestore-based) ───────────────────────────────────────────
 
 // Check if email already registered
 app.get('/api/auth/check-email', async (req, res) => {
   const { email } = req.query;
   try {
-    const { data, error } = await supabase.from('profiles').select('id').eq('email', email).maybeSingle();
-    if (error) throw error;
-    res.json({ exists: !!data });
+    const snapshot = await db.collection('users').where('email', '==', email).limit(1).get();
+    res.json({ exists: !snapshot.empty });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -44,24 +51,23 @@ app.get('/api/auth/check-email', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
-    const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
-    if (authError) throw authError;
+    const uid = `user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    await db.collection('users').doc(uid).set({
+      uid,
+      username,
+      email,
+      password, // Already hashed from frontend
+      createdAt: new Date().toISOString(),
+    });
 
-    if (authData.user) {
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([{ id: authData.user.id, username, email, full_name: username, role: 'user' }]);
-      if (profileError) throw profileError;
+    // Notify owner
+    sendMail(
+      process.env.OWNER_EMAIL,
+      'New User Registered',
+      `New user: ${username} (${email}) just registered.`
+    ).catch(console.error);
 
-      // Notify owner
-      sendMail(
-        process.env.OWNER_EMAIL,
-        'New User Registered',
-        `New user: ${username} (${email}) just registered.`
-      ).catch(console.error);
-    }
-
-    res.status(201).json({ user: authData.user, username });
+    res.status(201).json({ user: { uid, email, username } });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -71,14 +77,20 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-    if (authError) throw authError;
+    const snapshot = await db.collection('users').where('email', '==', email).limit(1).get();
+    if (snapshot.empty) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles').select('*').eq('id', authData.user.id).single();
-    if (profileError) throw profileError;
-
-    res.json({ user: authData.user, profile });
+    const userData = snapshot.docs[0].data();
+    if (userData.password === password) {
+      res.json({
+        user: { uid: userData.uid, email: userData.email },
+        profile: { username: userData.username, email: userData.email },
+      });
+    } else {
+      res.status(401).json({ error: 'Invalid email or password' });
+    }
   } catch (err) {
     res.status(401).json({ error: err.message });
   }
@@ -86,10 +98,17 @@ app.post('/api/auth/login', async (req, res) => {
 
 // Update password
 app.post('/api/auth/update-password', async (req, res) => {
-  const { password } = req.body;
+  const { userId, currentPassword, newPassword } = req.body;
   try {
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) throw error;
+    const snapshot = await db.collection('users').where('uid', '==', userId).limit(1).get();
+    if (snapshot.empty) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const userDoc = snapshot.docs[0];
+    if (userDoc.data().password !== currentPassword) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    await userDoc.ref.update({ password: newPassword });
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -100,43 +119,29 @@ app.post('/api/auth/update-password', async (req, res) => {
 app.patch('/api/profiles/me', async (req, res) => {
   const { userId, username } = req.body;
   try {
-    const { error } = await supabase.from('profiles').update({ username }).eq('id', userId);
-    if (error) throw error;
+    const snapshot = await db.collection('users').where('uid', '==', userId).limit(1).get();
+    if (!snapshot.empty) {
+      await snapshot.docs[0].ref.update({ username });
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// ─── Product routes ───────────────────────────────────────────────────────────
-
-app.get('/api/products', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('products').select('*');
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/products/:id', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('products').select('*').eq('id', req.params.id).single();
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    res.status(404).json({ error: 'Product not found' });
-  }
-});
-
-// ─── Order routes ─────────────────────────────────────────────────────────────
+// ─── Order routes (Firestore-based) ──────────────────────────────────────────
 
 app.post('/api/orders', async (req, res) => {
-  const { id, user_id, total, status } = req.body;
+  const { id, user_id, total, status, items } = req.body;
   try {
-    const { error } = await supabase.from('orders').insert([{ id, user_id, total, status: status || 'pending' }]);
-    if (error) throw error;
+    await db.collection('orders').doc(id).set({
+      id,
+      userId: user_id,
+      total,
+      status: status || 'Ordered',
+      items: items || [],
+      createdAt: new Date().toISOString(),
+    });
     res.status(201).json({ id, message: 'Order placed successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -145,10 +150,12 @@ app.post('/api/orders', async (req, res) => {
 
 app.get('/api/orders/user/:user_id', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('orders').select('*').eq('user_id', req.params.user_id).order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json(data || []);
+    const snapshot = await db
+      .collection('orders')
+      .where('userId', '==', req.params.user_id)
+      .orderBy('createdAt', 'desc')
+      .get();
+    res.json(snapshot.docs.map((d) => d.data()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -157,21 +164,19 @@ app.get('/api/orders/user/:user_id', async (req, res) => {
 app.patch('/api/orders/:id/status', async (req, res) => {
   const { status } = req.body;
   try {
-    const { error } = await supabase.from('orders').update({ status }).eq('id', req.params.id);
-    if (error) throw error;
+    await db.collection('orders').doc(req.params.id).update({ status });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Admin routes ─────────────────────────────────────────────────────────────
+// ─── Admin routes (Firestore-based) ──────────────────────────────────────────
 
 app.get('/api/admin/orders', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('orders').select('*');
-    if (error) throw error;
-    res.json(data);
+    const snapshot = await db.collection('orders').get();
+    res.json(snapshot.docs.map((d) => d.data()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -179,9 +184,13 @@ app.get('/api/admin/orders', async (req, res) => {
 
 app.get('/api/admin/users', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('profiles').select('id, username, email, role');
-    if (error) throw error;
-    res.json(data);
+    const snapshot = await db.collection('users').get();
+    res.json(
+      snapshot.docs.map((d) => {
+        const data = d.data();
+        return { uid: data.uid, username: data.username, email: data.email };
+      })
+    );
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -226,7 +235,7 @@ app.post('/api/verify-otp', async (req, res) => {
 
 app.post('/api/send-order-to-owner', async (req, res) => {
   const { orderId, userName, userEmail, items, totalCost, orderTime } = req.body;
-  const itemList = items.map(i => `- ${i.name} (x${i.quantity})`).join('\n');
+  const itemList = items.map((i) => `- ${i.name} (x${i.quantity})`).join('\n');
   const text = `New Order #${orderId}\nCustomer: ${userName} (${userEmail})\nTime: ${orderTime}\nItems:\n${itemList}\nTotal: ₹${totalCost}`;
   try {
     await sendMail(process.env.OWNER_EMAIL, `New Order #${orderId}`, text);
@@ -246,13 +255,20 @@ app.post('/api/notify-new-user', async (req, res) => {
   }
 });
 
-// ─── Status routes ────────────────────────────────────────────────────────────
+// ─── Status routes (Firestore-based) ─────────────────────────────────────────
 
 app.get('/api/status/:user_id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('user_status').select('*').eq('user_id', req.params.user_id).maybeSingle();
-    if (error) throw error;
-    res.json(data || { is_online: false });
+    const snapshot = await db
+      .collection('user_status')
+      .where('user_id', '==', req.params.user_id)
+      .limit(1)
+      .get();
+    if (snapshot.empty) {
+      res.json({ is_online: false });
+    } else {
+      res.json(snapshot.docs[0].data());
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -261,36 +277,28 @@ app.get('/api/status/:user_id', async (req, res) => {
 app.post('/api/status/update', async (req, res) => {
   const { user_id, is_online } = req.body;
   try {
-    const { error } = await supabase.from('user_status').upsert({ user_id, is_online, last_seen: new Date().toISOString() });
-    if (error) throw error;
+    await db.collection('user_status').doc(user_id).set(
+      { user_id, is_online, last_seen: new Date().toISOString() },
+      { merge: true }
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Seed initial products ────────────────────────────────────────────────────
+// ─── Serve Frontend (combined single URL) ────────────────────────────────────
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDist));
 
-const initialProducts = [
-  { id: '1', name: 'Monstera Deliciosa', price: 45.00, category: 'Indoor', image: 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=800', description: 'A beautiful Monstera plant with split leaves.', rating: 4.8, reviews: 124, stock: 15, is_featured: true },
-  { id: '2', name: 'Snake Plant', price: 25.00, category: 'Indoor', image: 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&q=80&w=800', description: 'Low-maintenance Snake Plant for your home.', rating: 4.5, reviews: 89, stock: 20, is_featured: false },
-];
+// SPA fallback — serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDist, 'index.html'));
+});
 
-const seedProducts = async () => {
-  try {
-    const { count } = await supabase.from('products').select('*', { count: 'exact', head: true });
-    if (count === 0) {
-      await supabase.from('products').insert(initialProducts);
-      console.log('Initial products seeded.');
-    }
-  } catch (err) {
-    console.error('Seed error:', err.message);
-  }
-};
-
-seedProducts();
-
-app.listen(process.env.PORT || 3001, () => {
-  console.log(`✅ Backend running on port ${process.env.PORT || 3001}`);
-  console.log(`🔐 Supabase credentials loaded from environment (not exposed to frontend)`);
+// ─── Start server ─────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ App running at http://localhost:${PORT}`);
+  console.log(`🔥 Firebase Firestore connected (project: green-plant-silling)`);
 });

@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package com.boutique.botanicals;
 
 import com.getcapacitor.BridgeActivity;
 

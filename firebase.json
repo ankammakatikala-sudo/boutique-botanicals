@@ -1,6 +1,7 @@
 {
   "hosting": {
-    "public": "dist",
+    "site": "green-plant-silling",
+    "public": "frontend/dist",
     "ignore": [
       "firebase.json",
       "**/.*",

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Boutique Botanicals</string>
+    <string name="title_activity_main">Boutique Botanicals</string>
+    <string name="package_name">com.boutique.botanicals</string>
+    <string name="custom_url_scheme">com.boutique.botanicals</string>
+</resources>

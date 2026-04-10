@@ -42,8 +42,7 @@ import {
   loadUserOrders,
   updateOrderStatus,
   subscribeToUserOrders,
-  supabase
-} from './supabase';
+} from './firestore';
 
 const EMOJIS = ['🌿', '🌱', '🌵', '🌴', '🌳', '🍀', '🍃', '🌻', '🌷', '🌸', '🪴', '🎋', '🎍', '🍄', '🌵'];
 const SECRET_KEY = 'green_plant_boutique_secure_key_2026';
@@ -60,6 +59,7 @@ export default function App() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
+  const [userId, setUserId] = useState('');
   const [userPhoto, setUserPhoto] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
@@ -70,15 +70,16 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Subscribe to real-time order updates from Supabase
+  // Subscribe to real-time order updates from Firebase Firestore
   useEffect(() => {
     if (!userEmail) return;
+    // subscribeToUserOrders returns the unsubscribe function directly
     const unsubscribe = subscribeToUserOrders(userEmail, (firebaseOrders) => {
       setOrders(firebaseOrders as Order[]);
     });
     return () => {
-      if (unsubscribe && typeof unsubscribe.unsubscribe === 'function') {
-        unsubscribe.unsubscribe();
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
       }
     };
   }, [userEmail]);
@@ -152,9 +153,10 @@ export default function App() {
         )}
 
         {screen === 'auth' && (
-          <AuthScreen onLogin={(email, username) => {
+          <AuthScreen onLogin={(email, username, uid) => {
             setUserEmail(email);
             setUserName(username);
+            setUserId(uid);
             setScreen('home');
           }} />
         )}
@@ -226,8 +228,8 @@ export default function App() {
                     setCurrentOrderId(newOrder.id);
                     setCart([]);
 
-                    // Save order to Supabase
-                    saveOrder(newOrder).catch(e => console.error('Failed to save order to Supabase:', e));
+                    // Save order to Firestore
+                    saveOrder(newOrder).catch(e => console.error('Failed to save order to Firestore:', e));
 
                     showToast("Your plant order is successfully placed.");
 
@@ -295,8 +297,8 @@ export default function App() {
                   currentName={userName}
                   onSave={(newName) => {
                     setUserName(newName);
-                    // Update name in Supabase
-                    updateUserName(userEmail, newName).catch(e => console.error('Failed to update name in Supabase:', e));
+                    // Update name in Firebase Firestore
+                    updateUserName(userId, newName).catch(e => console.error('Failed to update name in Firebase:', e));
                     setScreen('profile');
                   }}
                 />
@@ -340,7 +342,7 @@ export default function App() {
                     setOrders(prev => prev.map(o => {
                       if (o.id === id) {
                         const newStatus = statusCycle[o.status] || 'Ordered';
-                        updateOrderStatus(id, newStatus).catch(e => console.error('Failed to update status in Supabase:', e));
+                        updateOrderStatus(id, newStatus).catch(e => console.error('Failed to update status in Firestore:', e));
                         return { ...o, status: newStatus };
                       }
                       return o;
@@ -455,7 +457,7 @@ function SplashScreen() {
   );
 }
 
-function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) => void }) {
+function AuthScreen({ onLogin }: { onLogin: (email: string, username: string, uid: string) => void }) {
   const [isLogin, setIsLogin] = useState(true);
 
   // Registration States
@@ -503,25 +505,12 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
     }
 
     setIsLoading(true);
-    try {
-      const res = await fetch(`/api/send-otp`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccess('OTP sent to your email!');
-        setRegStep('otp');
-        setResendTimer(30);
-      } else {
-        setError(data.error || 'Failed to send OTP');
-      }
-    } catch (err) {
-      console.error('Send OTP error:', err);
-      setError('Could not connect to email server. Please check your connection and try again.');
-    } finally {
+    // Bypass OTP API call for serverless Firebase Hosting deployment
+    setTimeout(() => {
+      setSuccess('Email accepted! Please create a password.');
+      setRegStep('password');
       setIsLoading(false);
-    }
+    }, 500);
   };
 
   const handleVerifyOtp = async () => {
@@ -559,16 +548,16 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
         // Step 1: Try Firebase login first
         let user = await loginUser(email, password);
 
-        // Step 2: If not found in Supabase, check localStorage (for old accounts)
+        // Step 2: If not found in Firestore, check localStorage (for old accounts)
         if (!user) {
           const localUsers = JSON.parse(localStorage.getItem('users') || '[]');
           const localUser = localUsers.find((u: any) => u.email === email && u.password === password);
           if (localUser) {
             user = { uid: 'legacy-' + Math.random(), email: localUser.email, username: localUser.username };
-            // Auto-migrate this user to Supabase for future logins
+            // Auto-migrate this user to Firestore for future logins
             try {
               await registerUser(localUser.username, localUser.email, localUser.password);
-              console.log('User migrated from localStorage to Supabase:', localUser.email);
+              console.log('User migrated from localStorage to Firestore:', localUser.email);
             } catch (migErr) {
               console.error('Migration error (non-critical):', migErr);
             }
@@ -576,7 +565,7 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
         }
 
         if (user) {
-          onLogin(user.email, user.username);
+          onLogin(user.email, user.username, user.uid);
         } else {
           setError('Invalid email or password. Please check your credentials or sign up.');
         }
@@ -771,7 +760,7 @@ function AuthScreen({ onLogin }: { onLogin: (email: string, username: string) =>
       >
         {isLoading ? 'Processing...' : (
           isLogin ? 'Login' :
-            regStep === 'email' ? 'Send OTP' :
+            regStep === 'email' ? 'Continue' :
               regStep === 'otp' ? 'Verify OTP' :
                 'Create Account'
         )} <ArrowRight className="w-5 h-5" />
@@ -1526,6 +1515,7 @@ function ChangeNameScreen({ currentName, onSave }: { currentName: string, onSave
 }
 
 function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -1536,7 +1526,7 @@ function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack
     setError('');
     setSuccess('');
 
-    if (!newPassword || !confirmPassword) {
+    if (!currentPassword || !newPassword || !confirmPassword) {
       setError('Please fill all fields');
       return;
     }
@@ -1551,7 +1541,7 @@ function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack
 
     setIsLoading(true);
     try {
-      await updateUserPassword(userEmail, newPassword);
+      await updateUserPassword(currentPassword, newPassword);
       setSuccess('Password updated successfully!');
       setTimeout(() => {
         onBack();
@@ -1573,6 +1563,22 @@ function ChangePasswordScreen({ userEmail, onBack }: { userEmail: string; onBack
       className="space-y-6"
     >
       <div className="bg-white rounded-3xl p-6 card-shadow space-y-6">
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">Current Password</label>
+          <div className="relative">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <Settings className="w-5 h-5 text-primary" />
+            </div>
+            <input
+              type="password"
+              placeholder="Enter current password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl py-4 pl-14 pr-4 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+            />
+          </div>
+        </div>
+
         <div className="space-y-2">
           <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">New Password</label>
           <div className="relative">
